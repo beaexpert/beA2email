@@ -1,4 +1,4 @@
-# beA2email
+# beA2email / beAte
 
 _**Welcome to our demoapp beA2email**_
 
