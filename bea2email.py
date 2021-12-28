@@ -2,7 +2,7 @@
     beA.expert BEA-API / EXPERIMENTAL
     ---------------------------------
     Demo script not intented for production
-    Version 1.1 / 21.09.2021
+    Version 1.2 / 28.12.2021
     (c) be next GmbH (Licence: GPL-2.0 & BSD-3-Clause)
     https://opensource.org/licenses/GPL-2.0
     https://opensource.org/licenses/BSD-3-Clause
@@ -163,7 +163,10 @@ for message_to_consider in messages:
         # clean and prepare some fields for the future email
         email_bea_subject=""
         email_bea_body=""
+        email_bea_safeid_receiver=""
         email_bea_safeid_sender=message.metaData.sender.safeId
+        email_bea_referenceJustice=message.metaData.referenceJustice
+        email_bea_referenceNumber=message.metaData.referenceNumber
 
         # gather additional informations in "message.decryptedObjects"
         for a in message.decryptedObjects:
@@ -181,42 +184,66 @@ for message_to_consider in messages:
                 if bex_api.__DEBUG__: print(beaMessage)
                 
                 # get body and subject (since getfolderoverview does NOT always return a subject, we prefer to use this field)
-                email_bea_subject=beaMessage["messageSubject"]
-                email_bea_body=beaMessage["messageBody"]
-                if bex_api.__DEBUG__: print(email_bea_subject)
-                if bex_api.__DEBUG__: print(email_bea_body)
+                if email_bea_subject=="" and beaMessage["messageSubject"]!="":
+                    email_bea_subject=beaMessage["messageSubject"]
+                    if bex_api.__DEBUG__: print(email_bea_subject)
+                    
+                if email_bea_body=="" and beaMessage["messageBody"]!="":
+                    email_bea_body=beaMessage["messageBody"]                
+                    if bex_api.__DEBUG__: print(email_bea_body)
                 
-            elif a.name=="govello_coco":
+            elif a.name=="govello_coco" or a.name=="project_coco":
 
                 # extract the SAFE-ID of a court (Gericht) if empty in the beA-message (which is almost always the case!)
-                if email_bea_safeid_sender=="":
-                    root = ET.fromstring(a.data)
+                
+                root = ET.fromstring(a.data)
 
-                    # consider new and old format of "govello_coco"
-                    all_base64_contents=root.findall('{http://www.osci.de/2002/04/osci}Content/{http://www.osci.de/2002/04/osci}Base64Content')
-                    if all_base64_contents is None or len(all_base64_contents)==0:
-                        all_base64_contents=root.findall('{http://www.osci.de/2002/04/osci}Base64Content')
-                    
-                    for base64_content in all_base64_contents:
-                        if base64_content.attrib["Id"]=='additional_infos':
-                            govello_coco=base64.b64decode(base64_content.text)                        
-                            if bex_api.__DEBUG__: print(govello_coco)
-                            for b in govello_coco.splitlines():
-                                govello_coco_list=b.decode("utf-8").split("=")
-                                if govello_coco_list[0]=="user_id": # this is the SAFE-ID of a court!
-                                    email_bea_safeid_sender=govello_coco_list[1]
+                # consider new and old format of "govello_coco" and "project_coco"
+                all_base64_contents=root.findall('{http://www.osci.de/2002/04/osci}Content/{http://www.osci.de/2002/04/osci}Base64Content')
+                if all_base64_contents is None or len(all_base64_contents)==0:
+                    all_base64_contents=root.findall('{http://www.osci.de/2002/04/osci}Base64Content')
+                
+                for base64_content in all_base64_contents:
+
+                    if base64_content.attrib["Id"]=='additional_infos':
+                        coco=base64.b64decode(base64_content.text)
+                        if bex_api.__DEBUG__: print(coco)
+                        for b in coco.splitlines():
+                            coco_list=b.decode("utf-8").split("=")
+                            if email_bea_safeid_sender=="":
+                                if coco_list[0]=="user_id": # this is the SAFE-ID of a court!
+                                    email_bea_safeid_sender=coco_list[1]
                                     if bex_api.__DEBUG__: print(email_bea_safeid_sender)
                                     break
-                            break
-            
-            elif a.name=="project_coco":
-                # we could also extract some informations from this part of the message
-                # e.g. if the govello_coco isn't complete or is buggy
-                pass
+
+                    elif base64_content.attrib["Id"]=='nachricht.xml':
+                        coco=base64.b64decode(base64_content.text)
+                        if bex_api.__DEBUG__: print(coco)
+
+                        coco_xml = ET.fromstring(coco)
+                        coco_xml_elements = coco_xml.findall("Nachricht")
+
+                        for child in coco_xml:
+                            if bex_api.__DEBUG__: print(child.tag, child.attrib)
+                            if child.tag=="Aktenzeichen_Absender":
+                                if email_bea_referenceJustice=="" and child.text!="":
+                                    email_bea_referenceJustice=child.text
+                            elif child.tag=="Aktenzeichen_Empfaenger":
+                                if email_bea_referenceNumber=="" and child.text!="":
+                                    email_bea_referenceNumber=child.text
+                            elif child.tag=="Betreff":
+                                if email_bea_subject=="" and child.text!="":
+                                    email_bea_subject=child.text
+                            elif child.tag=="Freitext":
+                                if email_bea_body=="" and child.text!="":
+                                    email_bea_body=child.text
+                            elif child.tag=="Empfaengerkennung":
+                                if email_bea_safeid_receiver=="" and child.text!="":
+                                    email_bea_safeid_receiver=child.text           
 
         # format email
         email_from=message.metaData.sender.name.replace(",", "")
-        email_subject="[beA] ["+messageId+"] "+message.metaData.referenceJustice+" (°ʖ°) "+message.metaData.referenceNumber
+        email_subject="[beA] ["+messageId+"] "+email_bea_referenceJustice+" (°ʖ°) "+email_bea_referenceNumber
         email_body="Folgende beA-Nachricht wurde erhalten:\n" \
                 "--------------------------------------\n" \
                 "Absender: "+message.metaData.sender.name+" ("+email_bea_safeid_sender+")\n"
@@ -225,14 +252,17 @@ for message_to_consider in messages:
             email_body+="Empfänger: "+a.name+" ("+a.safeId+")\n" \
             
         email_body+="Empfangen am: "+message.metaData.receptionTime+"\n" \
-                "Aktenzeichen Justiz: "+message.metaData.referenceJustice+"\n" \
-                "Aktenzeichen: "+message.metaData.referenceNumber+"\n" \
+                "Aktenzeichen Justiz: "+email_bea_referenceJustice+"\n" \
+                "Aktenzeichen: "+email_bea_referenceNumber+"\n" \
                 "--------------------------------------\n" \
                 "beA-Nachricht: "+email_bea_subject+"\n\n" 
         
-        email_body+=email_bea_body
+        if email_bea_body=="" or email_bea_body is None:
+            email_body+="Diese Nachricht ist leer!"
+        else:
+            email_body+=email_bea_body
 
-        email_body+="--------------------------------------\n"\
+        email_body+="\n--------------------------------------\n"\
                 "Dateien:\n"
         nbre=0
         for a in message.attachments :
